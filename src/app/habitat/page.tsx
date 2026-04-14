@@ -21,10 +21,9 @@ export default function HabitatPage() {
   } = useNidoStore()
 
   const [modal, setModal] = useState<'checkIn' | 'relapse' | 'craving' | null>(null)
-  const [checkInResult, setCheckInResult]   = useState<CheckInResult | null>(null)
-  const [relapseResult, setRelapseResult]   = useState<RelapseResult | null>(null)
+  const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null)
+  const [relapseResult, setRelapseResult] = useState<RelapseResult | null>(null)
 
-  // Guard: redirect to onboarding if needed
   if (!isOnboarded) {
     if (typeof window !== 'undefined') router.replace('/onboarding')
     return null
@@ -34,75 +33,68 @@ export default function HabitatPage() {
   const activeBirds = getActiveBirds()
   const canFeed     = resources.seeds > 0
 
-  function handleCheckIn(note?: string) {
-    const result = checkInToday(note)
-    setCheckInResult(result)
-  }
-
-  function handleRelapse(note?: string) {
-    const result = registerRelapse(note)
-    setRelapseResult(result)
-  }
-
-  function handleResistCraving() {
-    resistCraving()
-    setModal(null)
-  }
-
-  function handleCravingRelapse() {
-    setModal('relapse')
-  }
-
-  function handleFeedBird(birdId: string) {
-    const ok = feedBird(birdId)
-    // TODO: show feedback toast
-  }
+  function handleCheckIn(note?: string)  { setCheckInResult(checkInToday(note)); }
+  function handleRelapse(note?: string)  { setRelapseResult(registerRelapse(note)); }
+  function handleResistCraving()         { resistCraving(); setModal(null); }
+  function handleCravingRelapse()        { setModal('relapse'); }
+  function handleFeedBird(birdId: string){ feedBird(birdId); }
 
   return (
     <AppShell>
-      <div className="flex flex-col min-h-full">
-        {/* Biome header */}
-        <div className="pt-10 pb-1 px-4">
-          <div className="flex items-center justify-between">
+      <div className="flex flex-col min-h-full animate-fade-in">
+
+        {/* ── Header ──────────────────────────────────────────── */}
+        <div className="pt-12 pb-2 px-5">
+          <div className="flex items-end justify-between">
             <div>
-              <h1 className="text-base font-semibold text-nido-dusk/70">
+              <p className="text-[10px] font-semibold text-nido-dusk/35 uppercase tracking-[0.12em] mb-0.5">
+                {biome.name}
+              </p>
+              <h1 className="text-xl font-bold text-nido-dusk leading-none">
                 {user?.name ? `Hola, ${user.name}` : 'Tu Nido'}
               </h1>
-              <p className="text-xs text-nido-dusk/40">{biome.name}</p>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-nido-dusk/40">{activeBirds.length} ave{activeBirds.length !== 1 ? 's' : ''}</p>
-            </div>
+
+            {/* Active birds pill */}
+            {activeBirds.length > 0 && (
+              <div className="flex items-center gap-1.5 rounded-full bg-white/70 border border-white/80 shadow-glass px-3 py-1.5 backdrop-blur-sm">
+                <span className="text-sm">🐦</span>
+                <span className="text-xs font-semibold text-nido-dusk/60">
+                  {activeBirds.length}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Habitat scene */}
-        <div className="relative">
-          <HabitatScene
-            biome={biome}
-            birds={activeBirds}
-            onFeedBird={handleFeedBird}
-            canFeed={canFeed}
-          />
-        </div>
+        {/* ── Habitat scene ────────────────────────────────────── */}
+        <HabitatScene
+          biome={biome}
+          birds={activeBirds}
+          onFeedBird={handleFeedBird}
+          canFeed={canFeed}
+        />
 
-        {/* Stats bar */}
+        {/* ── Resource bar ─────────────────────────────────────── */}
         <ResourceBar resources={resources} streak={streak.currentStreak} />
 
-        {/* Motivation banner */}
+        {/* ── Motivation banner ────────────────────────────────── */}
         {user?.motivation && (
           <div className="mx-4 mt-3">
-            <div className="rounded-2xl bg-nido-sage/8 border border-nido-sage/15 px-4 py-2.5 flex items-start gap-2">
-              <span className="text-sm">💚</span>
+            <div className="rounded-2xl bg-nido-sage/7 border border-nido-sage/12 px-4 py-3 flex items-start gap-2.5">
+              <div className="w-6 h-6 rounded-full bg-nido-sage/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-xs">💚</span>
+              </div>
               <p className="text-xs text-nido-forest leading-relaxed">
-                <strong>Tu razón: </strong>{user.motivation}
+                <span className="font-semibold">Tu razón: </span>
+                {user.motivation}
               </p>
             </div>
           </div>
         )}
 
-        {/* Actions */}
-        <div className="mt-3">
+        {/* ── Actions ──────────────────────────────────────────── */}
+        <div className="mt-3 px-4">
           <ActionPanel
             streak={streak}
             resources={resources}
@@ -112,25 +104,23 @@ export default function HabitatPage() {
           />
         </div>
 
-        {/* Next bird hint */}
+        {/* ── Next bird hint ───────────────────────────────────── */}
         <NextBirdHint streak={streak.currentStreak} birds={birds} />
       </div>
 
-      {/* Modals */}
+      {/* ── Modals ───────────────────────────────────────────── */}
       <CheckInModal
         open={modal === 'checkIn'}
-        onClose={() => { setModal(null); setCheckInResult(null) }}
+        onClose={() => { setModal(null); setCheckInResult(null); }}
         onConfirm={handleCheckIn}
         result={checkInResult}
       />
-
       <RelapseModal
         open={modal === 'relapse'}
-        onClose={() => { setModal(null); setRelapseResult(null) }}
+        onClose={() => { setModal(null); setRelapseResult(null); }}
         onConfirm={handleRelapse}
         result={relapseResult}
       />
-
       <CravingModal
         open={modal === 'craving'}
         onClose={() => setModal(null)}
@@ -143,12 +133,7 @@ export default function HabitatPage() {
 
 // ─── Next bird hint ───────────────────────────────────────────────────────────
 
-function NextBirdHint({
-  streak, birds,
-}: {
-  streak: number
-  birds: Bird[]
-}) {
+function NextBirdHint({ streak, birds }: { streak: number; birds: Bird[] }) {
   const next = birds
     .filter((b) => b.status === 'locked')
     .sort((a, b) => a.unlockDays - b.unlockDays)[0]
@@ -156,19 +141,32 @@ function NextBirdHint({
   if (!next) return null
 
   const daysLeft = Math.max(0, next.unlockDays - streak)
+  const pct      = Math.min(100, (streak / next.unlockDays) * 100)
 
   return (
-    <div className="mx-4 mt-3 mb-2">
-      <div className="rounded-2xl border border-white/60 bg-white/40 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
-        <div>
-          <p className="text-xs text-nido-dusk/50">Próxima ave</p>
-          <p className="text-sm font-semibold text-nido-dusk">{next.name}</p>
+    <div className="mx-4 mt-3 mb-4">
+      <div className="rounded-2xl bg-white/55 border border-white/65 shadow-glass backdrop-blur-sm px-4 py-3.5">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <p className="text-[10px] text-nido-dusk/40 font-semibold uppercase tracking-wide">
+              Próxima ave
+            </p>
+            <p className="text-sm font-semibold text-nido-dusk mt-0.5">{next.name}</p>
+          </div>
+          <div className="text-right flex flex-col items-end gap-0.5">
+            <span className="text-2xl opacity-35">{next.emoji}</span>
+            <p className="text-[10px] text-nido-dusk/40 font-medium">
+              {daysLeft === 0 ? '¡Hoy!' : `en ${daysLeft} día${daysLeft !== 1 ? 's' : ''}`}
+            </p>
+          </div>
         </div>
-        <div className="text-right">
-          <span className="text-2xl opacity-40">{next.emoji}</span>
-          <p className="text-xs text-nido-dusk/40 mt-0.5">
-            {daysLeft === 0 ? '¡Hoy!' : `en ${daysLeft} día${daysLeft !== 1 ? 's' : ''}`}
-          </p>
+
+        {/* Progress towards unlock */}
+        <div className="h-1 rounded-full bg-nido-dusk/8 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-nido-sage/50 transition-all duration-700"
+            style={{ width: `${pct}%` }}
+          />
         </div>
       </div>
     </div>
