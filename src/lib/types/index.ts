@@ -24,9 +24,12 @@ export interface Bird {
   lore: string
   rarity: BirdRarity
   unlockDays: number                         // smoke-free days required
+  /** Bioma de origen — afecta visibilidad y animación en el hábitat */
+  homeBiome: BiomeId
   emoji: string
   color: string                              // hex for sprite tint
-  habitatPosition: { x: number; y: number } // percentage (0-100)
+  /** Posición por defecto (override por slot del bioma en runtime) */
+  habitatPosition: { x: number; y: number }
   status: BirdStatus
   hungerLevel: number                        // 0-100
   lastFed: string | null                     // ISO date
@@ -52,8 +55,11 @@ export interface Biome {
 // ─── Resources ───────────────────────────────────────────────────────────────
 
 export interface Resources {
+  /** Moneda principal — se ganan cada día de check-in */
   seeds: number
+  /** Recurso escaso — solo en milestones y rachas largas */
   food: number
+  /** Recurso rarísimo — antojos resistidos + rachas muy largas */
   gems: number
 }
 
@@ -82,17 +88,21 @@ export interface DayEntry {
   streakAtTime: number
 }
 
-// ─── Streak ──────────────────────────────────────────────────────────────────
+// ─── Streak (compatible con engine/types StreakState) ─────────────────────────
 
+/**
+ * @deprecated Usar StreakState de @/lib/engine/types para la lógica del juego.
+ * Este alias se mantiene para compatibilidad con el store hasta migración completa.
+ */
 export interface StreakData {
   currentStreak: number
   longestStreak: number
   totalSmokeFree: number
-  lastCheckInDate: string | null  // "YYYY-MM-DD"
+  lastCheckInDate: string | null
   todayCheckedIn: boolean
 }
 
-// ─── Action results (returned from store actions for UI feedback) ─────────────
+// ─── Action results (devueltos por acciones del store para feedback en UI) ────
 
 export interface CheckInResult {
   newStreak: number

@@ -1,3 +1,15 @@
+/**
+ * NIDO — ZUSTAND STORE
+ * ──────────────────────────────────────────────────────────────────────────────
+ * Estado global de la aplicación.
+ *
+ * El store es delgado: solo orquesta llamadas al engine (lib/engine) y persiste
+ * el resultado. Toda la lógica de juego vive en funciones puras del engine.
+ *
+ * Preparado para Supabase: cada mutación local puede tener un paralelo en
+ * el backend (las acciones ya tienen GameEvent tipado para ello).
+ */
+
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
@@ -5,16 +17,36 @@ import type {
   NidoState, UserProfile, Bird, BiomeId,
   CheckInResult, RelapseResult, Resources,
 } from '@/lib/types'
-import { INITIAL_BIRDS } from '@/lib/data/birds'
-import { BIOMES, getBiomeForStreak } from '@/lib/data/biomes'
+import { INITIAL_BIRDS }        from '@/lib/data/birds'
+import { BIOMES }               from '@/lib/data/biomes'
 import { INITIAL_ACHIEVEMENTS } from '@/lib/data/achievements'
+import { getTodayString, generateId } from '@/lib/utils/dates'
+
+// Engine imports
 import {
-  getTodayString, generateId, isTodayString,
-} from '@/lib/utils/dates'
-import {
-  calcCheckInRewards, calcCravingReward,
-  addResources, spendSeeds, computeNewStreak, isMilestoneDay,
-} from '@/lib/utils/rewards'
+  // Streak
+  applyCheckIn,
+  resetDailyFlags,
+  applyCravingResisted,
+  INITIAL_STREAK_STATE,
+  // Seeds
+  calcCheckInReward,
+  calcCravingReward,
+  addResources,
+  spendSeedsForFeed,
+  INITIAL_RESOURCES,
+  // Birds
+  applyBirdsOnCheckIn,
+  applyFeedBird,
+  getFeedCost,
+  // Biomes
+  getBiomeId,
+  didBiomeChange,
+  // Relapse
+  computeRelapseOutcome,
+} from '@/lib/engine'
+
+import type { StreakState } from '@/lib/engine'
 
 // ─── Store interface ──────────────────────────────────────────────────────────
 
@@ -23,37 +55,67 @@ interface NidoStore extends NidoState {
   completeOnboarding: (profile: Omit<UserProfile, 'id' | 'createdAt'>) => void
 
   // Core gameplay
-  checkInToday: (note?: string) => CheckInResult | null
+  checkInToday:    (note?: string) => CheckInResult | null
   registerRelapse: (note?: string) => RelapseResult
-  resistCraving: () => void
+  resistCraving:   ()              => void
 
   // Bird care
   feedBird: (birdId: string) => boolean
 
   // Selectors
-  getActiveBirds: () => Bird[]
-  getCurrentBiome: () => (typeof BIOMES)[0]
+  getActiveBirds:   () => Bird[]
+  getCurrentBiome:  () => (typeof BIOMES)[0]
 
-  // Dev helper
+  // Internal streak (full engine shape, used by engine functions)
+  _streakFull: StreakState
+
+  // Dev
   _reset: () => void
 }
 
-// ─── Initial state ────────────────────────────────────────────────────────────
+// ─── Helpers de conversión StreakData ↔ StreakState ────────────────────────────
 
-const INITIAL_STATE: NidoState = {
-  user: null,
-  isOnboarded: false,
+/** El store usa StreakData (forma simple) para persistencia; el engine usa StreakState. */
+function toEngineStreak(s: NidoState['streak'], full?: Partial<StreakState>): StreakState {
+  return {
+    current:               s.currentStreak,
+    longest:               s.longestStreak,
+    totalSmokeFree:        s.totalSmokeFree,
+    lastCheckInDate:       s.lastCheckInDate,
+    todayCheckedIn:        s.todayCheckedIn,
+    frozenStreak:          full?.frozenStreak          ?? null,
+    relapseCount:          full?.relapseCount          ?? 0,
+    cravingsResistedTotal: full?.cravingsResistedTotal ?? 0,
+    cravingsResistedToday: full?.cravingsResistedToday ?? 0,
+  }
+}
+
+function fromEngineStreak(s: StreakState): NidoState['streak'] {
+  return {
+    currentStreak:   s.current,
+    longestStreak:   s.longest,
+    totalSmokeFree:  s.totalSmokeFree,
+    lastCheckInDate: s.lastCheckInDate,
+    todayCheckedIn:  s.todayCheckedIn,
+  }
+}
+
+// ─── Estado inicial ────────────────────────────────────────────────────────────
+
+const BASE_STATE: NidoState = {
+  user:          null,
+  isOnboarded:   false,
   streak: {
-    currentStreak: 0,
-    longestStreak: 0,
-    totalSmokeFree: 0,
+    currentStreak:   0,
+    longestStreak:   0,
+    totalSmokeFree:  0,
     lastCheckInDate: null,
-    todayCheckedIn: false,
+    todayCheckedIn:  false,
   },
-  birds: INITIAL_BIRDS.map((b) => ({ ...b })),
-  resources: { seeds: 10, food: 3, gems: 0 },
+  birds:        INITIAL_BIRDS.map((b) => ({ ...b })),
+  resources:    { ...INITIAL_RESOURCES },
   achievements: INITIAL_ACHIEVEMENTS.map((a) => ({ ...a })),
-  journal: [],
+  journal:      [],
   currentBiomeId: 'meadow',
 }
 
@@ -62,30 +124,26 @@ const INITIAL_STATE: NidoState = {
 export const useNidoStore = create<NidoStore>()(
   persist(
     (set, get) => ({
-      ...INITIAL_STATE,
+      ...BASE_STATE,
+      _streakFull: INITIAL_STREAK_STATE,
 
       // ── Onboarding ─────────────────────────────────────────────────────────
 
       completeOnboarding(profileInput) {
-        const today = getTodayString()
+        const today   = getTodayString()
         const profile: UserProfile = {
           ...profileInput,
-          id: generateId(),
+          id:        generateId(),
           createdAt: new Date().toISOString(),
         }
 
         set((state) => {
-          // Unlock first bird immediately
           const birds = state.birds.map((b) =>
             b.id === 'sparrow-dawn'
               ? { ...b, status: 'healthy' as const, unlockedDate: today }
               : b,
           )
-          return {
-            user: profile,
-            isOnboarded: true,
-            birds,
-          }
+          return { user: profile, isOnboarded: true, birds }
         })
       },
 
@@ -93,78 +151,76 @@ export const useNidoStore = create<NidoStore>()(
 
       checkInToday(note) {
         const state = get()
-        const today = getTodayString()
-
         if (state.streak.todayCheckedIn) return null
 
-        const newStreak = computeNewStreak(state.streak)
-        const rewards   = calcCheckInRewards(newStreak.currentStreak)
-        const resources = addResources(state.resources, rewards)
-        const milestone = isMilestoneDay(newStreak.currentStreak)
+        const today       = getTodayString()
+        const engStreak   = toEngineStreak(state.streak, state._streakFull)
 
-        // Unlock birds whose threshold was just crossed
-        const newBirdsUnlocked: Bird[] = []
-        const birds = state.birds.map((bird) => {
-          if (
-            bird.status === 'locked' &&
-            newStreak.currentStreak >= bird.unlockDays
-          ) {
-            newBirdsUnlocked.push(bird)
-            return { ...bird, status: 'healthy' as const, unlockedDate: today }
-          }
-          // Recovering birds become healthy after 2 days (simplified: on next check-in)
-          if (bird.status === 'recovering') {
-            return { ...bird, status: 'healthy' as const }
-          }
-          return bird
+        // 1. Update streak
+        const newEngStreak = applyCheckIn(engStreak, today)
+
+        // 2. Calculate reward
+        const reward = calcCheckInReward(newEngStreak.current)
+
+        // 3. Update resources
+        const resources = addResources(state.resources, {
+          seeds: reward.seeds,
+          food:  reward.food,
+          gems:  reward.gems,
         })
 
-        // Unlock achievements
-        const newAchievements: (typeof state.achievements[0])[] = []
+        // 4. Apply bird transitions (unlock, recover, hunger)
+        const { birds, unlocked, returned } = applyBirdsOnCheckIn(
+          state.birds,
+          newEngStreak.current,
+          today,
+        )
+
+        // 5. Unlock achievements
+        const newAchievements: typeof state.achievements = []
         const achievements = state.achievements.map((ach) => {
-          if (!ach.unlocked && newStreak.currentStreak >= ach.unlockDays) {
-            const unlocked = { ...ach, unlocked: true, unlockedDate: today }
-            newAchievements.push(unlocked)
-            return unlocked
+          if (!ach.unlocked && newEngStreak.current >= ach.unlockDays) {
+            const updated = { ...ach, unlocked: true, unlockedDate: today }
+            newAchievements.push(updated)
+            return updated
           }
           return ach
         })
 
-        // Maybe upgrade biome
-        const newBiome = getBiomeForStreak(newStreak.currentStreak)
-        const biomeChanged = newBiome.id !== state.currentBiomeId
+        // 6. Maybe upgrade biome
+        const prevBiome     = getBiomeId(engStreak.current)
+        const nextBiome     = getBiomeId(newEngStreak.current)
+        const biomeChanged  = prevBiome !== nextBiome
+        const currentBiomeId: BiomeId = nextBiome
 
-        // Journal entry
+        // 7. Journal
         const entry = {
-          id: generateId(),
-          date: today,
-          type: 'smoke_free' as const,
+          id:           generateId(),
+          date:         today,
+          type:         'smoke_free' as const,
           note,
-          rewardsEarned: rewards,
-          streakAtTime: newStreak.currentStreak,
+          rewardsEarned: { seeds: reward.seeds, food: reward.food, gems: reward.gems },
+          streakAtTime:  newEngStreak.current,
         }
 
         set({
-          streak: {
-            ...newStreak,
-            lastCheckInDate: today,
-            todayCheckedIn: true,
-          },
+          streak:        fromEngineStreak(newEngStreak),
+          _streakFull:   newEngStreak,
           birds,
           resources,
           achievements,
-          currentBiomeId: newBiome.id,
-          journal: [...state.journal, entry],
+          currentBiomeId,
+          journal:       [...state.journal, entry],
         })
 
         const result: CheckInResult = {
-          newStreak: newStreak.currentStreak,
-          rewards,
-          newBirdsUnlocked,
+          newStreak:        newEngStreak.current,
+          rewards:          { seeds: reward.seeds, food: reward.food, gems: reward.gems },
+          newBirdsUnlocked: unlocked,
           newAchievements,
-          isMilestone: milestone,
+          isMilestone:      reward.isMilestone,
           biomeChanged,
-          newBiomeId: biomeChanged ? newBiome.id : null,
+          newBiomeId:       biomeChanged ? nextBiome : null,
         }
 
         return result
@@ -173,70 +229,61 @@ export const useNidoStore = create<NidoStore>()(
       // ── Relapse ────────────────────────────────────────────────────────────
 
       registerRelapse(note) {
-        const state = get()
-        const today = getTodayString()
-        const streakLost = state.streak.currentStreak
+        const state      = get()
+        const today      = getTodayString()
+        const engStreak  = toEngineStreak(state.streak, state._streakFull)
 
-        // Pick one healthy bird to leave temporarily
-        const healthyBirds = state.birds.filter(
-          (b) => b.status === 'healthy' && b.id !== 'sparrow-dawn',
-        )
-        const leavingBird = healthyBirds[0] ?? null
-
-        // Pick a different healthy bird to get sick (include sparrow)
-        const sickCandidates = state.birds.filter(
-          (b) => b.status === 'healthy' && b.id !== leavingBird?.id,
-        )
-        const sickBird = sickCandidates[0] ?? null
-
-        const birds = state.birds.map((b) => {
-          if (b.id === leavingBird?.id) return { ...b, status: 'away' as const }
-          if (b.id === sickBird?.id)    return { ...b, status: 'sick' as const }
-          return b
-        })
+        const outcome = computeRelapseOutcome(engStreak, state.birds, note, today)
 
         const entry = {
-          id: generateId(),
-          date: today,
-          type: 'relapse' as const,
+          id:          generateId(),
+          date:        today,
+          type:        'relapse' as const,
           note,
-          streakAtTime: streakLost,
+          streakAtTime: outcome.event.streakLost,
         }
 
         set({
-          streak: {
-            ...state.streak,
-            currentStreak:   0,
-            lastCheckInDate: today,
-            todayCheckedIn:  true, // can't check-in again today
-          },
-          birds,
-          journal: [...state.journal, entry],
+          streak:      fromEngineStreak(outcome.newStreak),
+          _streakFull: outcome.newStreak,
+          birds:       outcome.birds,
+          journal:     [...state.journal, entry],
         })
 
         return {
-          birdLeft: leavingBird,
-          birdSick:  sickBird,
-          streakLost,
+          birdLeft:   outcome.birdLeft,
+          birdSick:   outcome.birdSick,
+          streakLost: outcome.streakLost,
         }
       },
 
       // ── Resist craving ─────────────────────────────────────────────────────
 
       resistCraving() {
-        const state  = get()
-        const today  = getTodayString()
-        const rewards = calcCravingReward()
+        const state      = get()
+        const today      = getTodayString()
+        const engStreak  = toEngineStreak(state.streak, state._streakFull)
+
+        const reward = calcCravingReward(
+          engStreak.current,
+          engStreak.cravingsResistedToday,
+        )
+
+        if (reward.blocked) return
+
+        const newEngStreak = applyCravingResisted(engStreak)
         const entry = {
-          id: generateId(),
-          date: today,
-          type: 'craving_resisted' as const,
-          rewardsEarned: rewards,
-          streakAtTime: state.streak.currentStreak,
+          id:           generateId(),
+          date:         today,
+          type:         'craving_resisted' as const,
+          rewardsEarned: { seeds: reward.seeds, gems: reward.gems },
+          streakAtTime:  engStreak.current,
         }
+
         set({
-          resources: addResources(state.resources, rewards),
-          journal: [...state.journal, entry],
+          _streakFull: newEngStreak,
+          resources:   addResources(state.resources, { seeds: reward.seeds, gems: reward.gems }),
+          journal:     [...state.journal, entry],
         })
       },
 
@@ -247,22 +294,16 @@ export const useNidoStore = create<NidoStore>()(
         const bird  = state.birds.find((b) => b.id === birdId)
         if (!bird || bird.status === 'locked' || bird.status === 'away') return false
 
-        const newResources = spendSeeds(state.resources, bird.feedCost)
+        const newResources = spendSeedsForFeed(state.resources, bird.rarity)
         if (!newResources) return false
 
-        const today = getTodayString()
-        const birds = state.birds.map((b) => {
-          if (b.id !== birdId) return b
-          return {
-            ...b,
-            hungerLevel: 100,
-            lastFed: today,
-            // Sick birds recover when fed
-            status: b.status === 'sick' ? ('recovering' as const) : b.status,
-          }
-        })
+        const today   = getTodayString()
+        const updated = applyFeedBird(bird, today)
 
-        set({ resources: newResources, birds })
+        set({
+          resources: newResources,
+          birds:     state.birds.map((b) => (b.id === birdId ? updated : b)),
+        })
         return true
       },
 
@@ -280,17 +321,31 @@ export const useNidoStore = create<NidoStore>()(
       // ── Dev ────────────────────────────────────────────────────────────────
 
       _reset() {
-        set(INITIAL_STATE)
+        set({ ...BASE_STATE, _streakFull: INITIAL_STREAK_STATE })
       },
     }),
     {
       name: 'nido-storage',
-      // Hydration guard: reset todayCheckedIn if the stored date ≠ today
+      partialize: (state) => ({
+        user:          state.user,
+        isOnboarded:   state.isOnboarded,
+        streak:        state.streak,
+        _streakFull:   state._streakFull,
+        birds:         state.birds,
+        resources:     state.resources,
+        achievements:  state.achievements,
+        journal:       state.journal,
+        currentBiomeId: state.currentBiomeId,
+      }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
         const today = getTodayString()
+        // Reset daily flags if it's a new day
         if (state.streak.lastCheckInDate !== today) {
           state.streak.todayCheckedIn = false
+          if (state._streakFull) {
+            state._streakFull = resetDailyFlags(state._streakFull, today)
+          }
         }
       },
     },
