@@ -1,7 +1,7 @@
 {
-  "name": "endorx",
+  "name": "radiodent",
   "version": "1.0.0",
-  "description": "Simulador interactivo de radiología endodóntica (SPA)",
+  "description": "RadioDent — Radiología Dental Interactiva (SPA) con análisis de radiografías por IA",
   "scripts": {
     "build": "tailwindcss -i tailwind.input.css -o dist/tailwind.css --minify",
     "watch": "tailwindcss -i tailwind.input.css -o dist/tailwind.css --watch",
