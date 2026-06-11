@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tailwindcss -i tailwind.input.css -o dist/tailwind.css --minify",
     "watch": "tailwindcss -i tailwind.input.css -o dist/tailwind.css --watch",
-    "serve": "python3 -m http.server 8080"
+    "serve": "python3 -m http.server 8080",
+    "build:site": "npm run build && rm -rf _site && mkdir -p _site && cp -r index.html app.js styles.css dist vendor _site/"
   },
   "repository": {
     "type": "git",

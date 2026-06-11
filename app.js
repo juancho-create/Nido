@@ -831,7 +831,7 @@ async function analyzeImage() {
       },
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
-        max_tokens: 4096,
+        max_tokens: 16000,
         stream: true,
         thinking: { type: 'adaptive' },
         system: ANALYSIS_SYSTEM_PROMPT,

@@ -232,3 +232,44 @@ aside::-webkit-scrollbar-thumb { background: #2a3a5c; border-radius: 3px; }
   color: #22d3ee;
   animation: pulse-dot 0.8s ease-in-out infinite;
 }
+
+/* ───────── Responsive: tablets y móviles ───────── */
+@media (max-width: 1023px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+  body > .flex {
+    flex-direction: column;
+    height: auto;
+  }
+  /* Sidebar pasa a bloque superior a ancho completo */
+  body > .flex > aside {
+    width: 100%;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(42, 58, 92, 0.6);
+  }
+  main {
+    height: auto;
+  }
+  #viewport {
+    flex-direction: column;
+    padding: 1rem;
+  }
+  #xray-frame,
+  #viewport.with-results #xray-frame {
+    width: min(100%, 480px);
+  }
+  /* El informe IA se apila bajo el visor */
+  #analysis-panel {
+    width: 100%;
+    height: auto;
+    max-height: 60vh;
+  }
+  /* Cabecera del visor: oculta el dato de paciente largo en pantallas estrechas */
+  header p:first-of-type {
+    font-size: 0.75rem;
+  }
+}
