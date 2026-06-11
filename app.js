@@ -1,7 +1,8 @@
 /* ════════════════════════════════════════════════════════════════════
-   EndoRX · Simulador interactivo de radiología endodóntica
+   RadioDent · Radiología dental interactiva
    SPA en vanilla JS: radiografía vectorial SVG de un molar inferior,
-   capas anatómicas, filtros de imagen en vivo y quiz de diagnóstico.
+   capas anatómicas, filtros de imagen en vivo, quiz de diagnóstico
+   y análisis de radiografías reales con la API de Claude.
    ════════════════════════════════════════════════════════════════════ */
 
 'use strict';
