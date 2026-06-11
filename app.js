@@ -605,6 +605,7 @@ const MODE_LABELS = {
   learn: 'Modo Aprendizaje',
   filters: 'Simulador de Filtros',
   quiz: 'Quiz de Diagnóstico',
+  analyze: 'Mi Radiografía · IA',
 };
 
 document.querySelectorAll('.mode-btn').forEach((btn) => {
@@ -619,11 +620,314 @@ function setMode(mode) {
   $('#mode-label').textContent = MODE_LABELS[mode];
 
   const inQuiz = mode === 'quiz';
-  document.getElementById('hotspots').style.display = inQuiz ? 'none' : '';
+  const inAnalyze = mode === 'analyze';
+  document.getElementById('hotspots').style.display = inQuiz || inAnalyze ? 'none' : '';
   frame.classList.toggle('quiz-active', inQuiz && state.quiz.active);
   unlight();
   if (!inQuiz) clearQuizLayer();
   else if (state.quiz.active) showQuestion();
+
+  // Modo IA: muestra la radiografía del usuario y el panel de informe
+  const userXray = document.getElementById('user-xray');
+  const analysisPanel = document.getElementById('analysis-panel');
+  userXray.classList.toggle('hidden', !inAnalyze);
+  userXray.classList.toggle('flex', inAnalyze);
+  analysisPanel.classList.toggle('hidden', !inAnalyze);
+  analysisPanel.classList.toggle('flex', inAnalyze);
+  document.getElementById('viewport').classList.toggle('with-results', inAnalyze);
 }
 
 applyFilters();
+
+/* ═══════════════ 9. MI RADIOGRAFÍA · ANÁLISIS CON IA ═══════════════
+   Sube JPG/PNG/WEBP/PDF, lo muestra en el visor (con los mismos filtros
+   de brillo/contraste) y lo analiza con la API de Claude (visión). */
+
+const ANTHROPIC_MODEL = 'claude-opus-4-8';
+const API_KEY_STORAGE = 'endorx_api_key';
+const MAX_IMAGE_EDGE = 2048; // px — controla coste de tokens manteniendo detalle
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+const fileStatus = document.getElementById('file-status');
+const userImage = document.getElementById('user-image');
+const userXrayEmpty = document.getElementById('user-xray-empty');
+const btnAnalyze = document.getElementById('btn-analyze');
+const analysisOutput = document.getElementById('analysis-output');
+const analysisStatus = document.getElementById('analysis-status');
+const analysisDot = document.getElementById('analysis-status-dot');
+const apiKeyInput = document.getElementById('api-key-input');
+const apiKeyDot = document.getElementById('api-key-dot');
+
+let uploadedImage = null; // { data: base64 sin prefijo, mediaType, name }
+let analyzing = false;
+
+/* ── Clave API (solo localStorage del navegador) ── */
+function getApiKey() {
+  return localStorage.getItem(API_KEY_STORAGE) || '';
+}
+function refreshKeyIndicator() {
+  const has = !!getApiKey();
+  apiKeyDot.classList.toggle('bg-red-400', !has);
+  apiKeyDot.classList.toggle('bg-emerald-400', has);
+}
+apiKeyInput.value = getApiKey();
+refreshKeyIndicator();
+document.getElementById('btn-save-key').addEventListener('click', () => {
+  localStorage.setItem(API_KEY_STORAGE, apiKeyInput.value.trim());
+  refreshKeyIndicator();
+});
+
+/* ── Filtros compartidos: la imagen subida usa los mismos valores ── */
+const aSliderB = document.getElementById('a-slider-brightness');
+const aSliderC = document.getElementById('a-slider-contrast');
+const baseApplyFilters = applyFilters;
+applyFilters = function () {
+  baseApplyFilters();
+  const inv = state.inverted ? ' invert(1)' : '';
+  userImage.style.filter = `brightness(${state.brightness}%) contrast(${state.contrast}%)${inv}`;
+  aSliderB.value = state.brightness;
+  aSliderC.value = state.contrast;
+  document.getElementById('a-val-brightness').textContent = `${state.brightness}%`;
+  document.getElementById('a-val-contrast').textContent = `${state.contrast}%`;
+};
+aSliderB.addEventListener('input', () => { state.brightness = +aSliderB.value; sliderB.value = aSliderB.value; applyFilters(); });
+aSliderC.addEventListener('input', () => { state.contrast = +aSliderC.value; sliderC.value = aSliderC.value; applyFilters(); });
+
+/* ── Carga de archivos ── */
+dropzone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+['dragover', 'dragenter'].forEach((ev) => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add('dragover'); }));
+['dragleave', 'drop'].forEach((ev) => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
+dropzone.addEventListener('drop', (e) => { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+
+async function loadFile(file) {
+  try {
+    setFileStatus(`Cargando ${file.name}…`);
+    let canvas;
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      canvas = await renderPdfToCanvas(file);
+    } else if (/^image\/(jpeg|png|webp)$/.test(file.type)) {
+      canvas = await renderImageToCanvas(file);
+    } else {
+      throw new Error('Formato no soportado. Usa JPG, PNG, WEBP o PDF.');
+    }
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    uploadedImage = { data: dataUrl.split(',')[1], mediaType: 'image/jpeg', name: file.name };
+    userImage.src = dataUrl;
+    userXrayEmpty.classList.add('hidden');
+    document.getElementById('analyze-filters').classList.remove('hidden');
+    btnAnalyze.disabled = false;
+    setFileStatus(`✓ ${file.name} · ${canvas.width}×${canvas.height}px`);
+  } catch (err) {
+    uploadedImage = null;
+    btnAnalyze.disabled = true;
+    setFileStatus(`✗ ${err.message}`);
+  }
+}
+
+function setFileStatus(text) {
+  fileStatus.textContent = text;
+  fileStatus.classList.remove('hidden');
+}
+
+function renderImageToCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(downscale(img, img.naturalWidth, img.naturalHeight));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen.')); };
+    img.src = url;
+  });
+}
+
+async function renderPdfToCanvas(file) {
+  const pdfjs = await import('./vendor/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
+  const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const page = await pdf.getPage(1); // primera página del documento
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(MAX_IMAGE_EDGE / Math.max(base.width, base.height), 4);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width);
+  canvas.height = Math.round(viewport.height);
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  if (pdf.numPages > 1) setFileStatus(`PDF de ${pdf.numPages} páginas: se usa la página 1.`);
+  return canvas;
+}
+
+function downscale(img, w, h) {
+  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(w, h));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+/* ── Análisis con la API de Claude (visión, streaming) ── */
+
+const ANALYSIS_SYSTEM_PROMPT = `Eres un radiólogo dental docente experto en interpretación de radiografías odontológicas (periapicales, aletas de mordida, panorámicas y CBCT en proyección 2D). Tu función es EDUCATIVA: enseñar a una persona que trabaja en una clínica radiológica a leer la imagen.
+
+Analiza la radiografía y responde SIEMPRE en español, en markdown, con esta estructura:
+
+## Tipo de imagen
+Identifica el tipo de radiografía y la región/piezas visibles (nomenclatura FDI).
+
+## Estructuras anatómicas visibles
+Lista las estructuras normales identificables (esmalte, dentina, pulpa, conductos, hueso, seno maxilar, conducto dentario inferior, etc.) y explica brevemente cómo reconocerlas por su densidad (radiopaco/radiolúcido).
+
+## Hallazgos
+Describe lo relevante que se observe, por ejemplo:
+- **Cordales (terceros molares)**: posición y angulación (vertical, mesioangular, distoangular, horizontal), si está incluida/impactada y su relación con el segundo molar o el conducto dentario.
+- **Restauraciones**: coronas, obturaciones, pernos, implantes (muy radiopacos).
+- **Endodoncias**: conductos obturados, calidad aparente de la obturación (longitud, densidad).
+- **Ortodoncia**: brackets, alambres, botones, movimientos en curso.
+- **Posibles patologías**: caries (radiolucidez coronal), lesiones periapicales, pérdida ósea, calcificaciones. Usa lenguaje de sospecha («compatible con», «sugiere»), nunca afirmaciones diagnósticas.
+
+## Para aprender
+Cierra con 2-3 puntos didácticos: qué patrón visual permitió cada hallazgo y qué buscar en imágenes similares.
+
+Reglas: si la imagen no es una radiografía dental, dilo y no inventes. Si la calidad impide valorar algo, indícalo. Recuerda siempre que esto no sustituye el diagnóstico de un odontólogo.`;
+
+document.getElementById('btn-analyze').addEventListener('click', analyzeImage);
+
+async function analyzeImage() {
+  if (!uploadedImage || analyzing) return;
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    document.getElementById('api-config').open = true;
+    setAnalysisState('error', 'Falta la clave API');
+    analysisOutput.innerHTML = '<p class="text-red-300 text-xs">Configura tu clave API de Anthropic en el panel lateral para usar el análisis.</p>';
+    return;
+  }
+
+  analyzing = true;
+  btnAnalyze.disabled = true;
+  btnAnalyze.textContent = 'Analizando…';
+  setAnalysisState('busy', 'streaming');
+  analysisOutput.innerHTML = '';
+  analysisOutput.classList.add('stream-cursor');
+
+  const question = document.getElementById('analyze-question').value.trim();
+  const userText = question
+    ? `Analiza esta radiografía dental. Además, responde específicamente: ${question}`
+    : 'Analiza esta radiografía dental.';
+
+  let fullText = '';
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 4096,
+        stream: true,
+        thinking: { type: 'adaptive' },
+        system: ANALYSIS_SYSTEM_PROMPT,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: uploadedImage.mediaType, data: uploadedImage.data } },
+            { type: 'text', text: userText },
+          ],
+        }],
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error?.message || `Error HTTP ${res.status}`);
+    }
+
+    // Lectura del stream SSE: acumula los deltas de texto
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let stopReason = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let event;
+        try { event = JSON.parse(line.slice(6)); } catch { continue; }
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+          fullText += event.delta.text;
+          analysisOutput.innerHTML = renderMarkdown(fullText);
+          analysisOutput.scrollTop = analysisOutput.scrollHeight;
+        } else if (event.type === 'message_delta' && event.delta?.stop_reason) {
+          stopReason = event.delta.stop_reason;
+        } else if (event.type === 'error') {
+          throw new Error(event.error?.message || 'Error en el stream');
+        }
+      }
+    }
+
+    if (stopReason === 'refusal') {
+      throw new Error('El modelo declinó analizar esta imagen.');
+    }
+    if (!fullText) throw new Error('La respuesta llegó vacía. Inténtalo de nuevo.');
+    setAnalysisState('done', 'completado');
+  } catch (err) {
+    setAnalysisState('error', 'error');
+    analysisOutput.innerHTML =
+      (fullText ? renderMarkdown(fullText) : '') +
+      `<p class="text-red-300 text-xs mt-3">⚠ ${escapeHtml(err.message)}</p>`;
+  } finally {
+    analysisOutput.classList.remove('stream-cursor');
+    analyzing = false;
+    btnAnalyze.disabled = !uploadedImage;
+    btnAnalyze.textContent = 'Analizar con IA';
+  }
+}
+
+function setAnalysisState(stateName, label) {
+  analysisDot.className = '';
+  analysisDot.classList.add('w-2', 'h-2', 'rounded-full', stateName);
+  if (stateName === 'busy') analysisDot.classList.add('busy');
+  analysisStatus.textContent = label;
+}
+
+/* Render mínimo de markdown (títulos, negrita, cursiva, listas) sin dependencias */
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function renderMarkdown(md) {
+  const lines = escapeHtml(md).split('\n');
+  let html = '';
+  let inList = false;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const isItem = /^\s*[-*] /.test(line);
+    if (inList && !isItem) { html += '</ul>'; inList = false; }
+    if (/^#{2,3} /.test(line)) {
+      html += `<h3>${inline(line.replace(/^#{2,3} /, ''))}</h3>`;
+    } else if (isItem) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${inline(line.replace(/^\s*[-*] /, ''))}</li>`;
+    } else if (line) {
+      html += `<p>${inline(line)}</p>`;
+    }
+  }
+  if (inList) html += '</ul>';
+  return html;
+
+  function inline(s) {
+    return s
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>');
+  }
+}

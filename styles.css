@@ -181,3 +181,54 @@
 /* Scrollbar discreto del sidebar */
 aside::-webkit-scrollbar { width: 6px; }
 aside::-webkit-scrollbar-thumb { background: #2a3a5c; border-radius: 3px; }
+
+/* ───────── Módulo «Mi Radiografía» (IA) ───────── */
+
+/* Tamaño del visor: ancho completo por defecto, reducido cuando hay informe */
+#xray-frame { width: min(92%, 640px); max-height: 100%; }
+#viewport.with-results #xray-frame { width: min(46%, 520px); }
+
+#dropzone.dragover {
+  border-color: #22d3ee;
+  background: rgba(34, 211, 238, 0.08);
+}
+
+/* La imagen del usuario recibe los mismos filtros que la película SVG */
+#user-image { transition: filter 0.12s linear; }
+
+#analysis-status-dot.busy {
+  background: #fbbf24;
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+#analysis-status-dot.error { background: #f87171; }
+#analysis-status-dot.done { background: #34d399; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+/* Render mínimo de markdown en el informe */
+.analysis-md h2, .analysis-md h3 {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0.9rem 0 0.35rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(42, 58, 92, 0.6);
+}
+.analysis-md p { margin: 0.4rem 0; }
+.analysis-md ul { margin: 0.4rem 0 0.4rem 1.1rem; list-style: disc; }
+.analysis-md li { margin: 0.2rem 0; }
+.analysis-md strong { color: #e2e8f0; }
+.analysis-md em { color: #a5f3fc; font-style: normal; }
+.analysis-md::-webkit-scrollbar { width: 6px; }
+.analysis-md::-webkit-scrollbar-thumb { background: #2a3a5c; border-radius: 3px; }
+
+/* Cursor parpadeante durante el streaming */
+.stream-cursor::after {
+  content: '▋';
+  color: #22d3ee;
+  animation: pulse-dot 0.8s ease-in-out infinite;
+}

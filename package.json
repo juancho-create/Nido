@@ -16,5 +16,8 @@
   "license": "ISC",
   "devDependencies": {
     "tailwindcss": "^3.4.19"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.0.227"
   }
 }
